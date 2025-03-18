@@ -139,7 +139,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     old_base_price = safe_float(original_row.get("Base Price") if original_row is not None else row.get("Base Price"))
     old_list_price = safe_float(original_row.get("List Price") if original_row is not None else row.get("List Price"))
 
-    lb_per_billing_uom = safe_float(row.get("lb Per Billing UOM", 1), 1)
+    lb_per_billing_uom = safe_float(row.get("lb Per Billling UOM", 1), 1)
     vendor_invoice_price = new_cost_price if new_cost_price is not None else safe_float(row.get("Vendor Invoice Price"))
     actual_inv_cost = calculate_actual_inv_cost(vendor_invoice_price, lb_per_billing_uom)
     adj = safe_float(row.get("Adj", 0))
@@ -160,7 +160,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     new_final_cost_lb = material_labour
     billing_uom_cost = calculate_billing_uom_cost(new_final_cost_lb, lb_per_billing_uom)
     priced_sticker = safe_float(row.get("Priced Sticker", 0))
-    final_cost = calculate_final_cost(billing_uom_cost, priced_sticker)
+    final_cost = calculate_final_cost(billling_uom_cost, priced_sticker)
     base_price = calculate_base_price(final_cost, base_margin_percent)
     list_price = calculate_list_price(final_cost, base_margin_percent)
     margin_dollars = calculate_margin_dollars(base_price, final_cost)
@@ -297,11 +297,11 @@ if cost_file and export_file:
     if df_cost is None or df_export is None:
         st.stop()
 
-    cost_required = {"TRSM Code", "lb Per Billing UOM", "Supplier S Name", "Vendor Invoice Price",
+    cost_required = {"TRSM Code", "lb Per Billling UOM", "Supplier S Name", "Vendor Invoice Price",
                      "Actual Inv Cost(lb)", "Adj", "Market Cost", "Freight", "Landed Cost",
                      "Recovery %", "Recovery Input", "Raw Material Input Qty", "Raw Material Per LB Cost",
                      "Trim %", "Recovery", "Labour $", "Normal Sticker", "Material + Labour",
-                     "New Final Cost (Lb)", "Billing UOM Cost", "Priced Sticker", "Final Cost",
+                     "New Final Cost (Lb)", "Billling UOM Cost", "Priced Sticker", "Final Cost",
                      "Base Price", "List Price"}
     for i in range(1, 5):
         cost_required.update({f"Item-{i}", f"Qty-{i}", f"Unit $-{i}", f"Total $-{i}"})
