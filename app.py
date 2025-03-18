@@ -155,8 +155,8 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     priced_sticker = safe_float(row.get("Priced Sticker", 0))
     final_cost = calculate_final_cost(billling_uom_cost, priced_sticker)
 
-    # Base Price uses Base Margin% from the input file
-    base_margin_percent = safe_float(row.get("Base Margin%", 0.0)) / 100  # Assuming percentage format
+    # Base Price uses Base Margin % from the input file
+    base_margin_percent = safe_float(row.get("Base Margin %", 0.0)) / 100  # Assuming percentage format
     if base_margin_percent == 0.0:
         base_margin_percent = DEFAULT_BASE_MARGIN  # Fallback if not provided
     base_price = calculate_price_from_margin(final_cost, base_margin_percent)
@@ -189,7 +189,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     row["List Price"] = list_price
     row["Waste Output $"] = 0.0
     row["Trim Cost/LB"] = 0.0
-    row["Base Margin%"] = base_margin_percent * 100  # Store as percentage
+    row["Base Margin %"] = base_margin_percent * 100  # Store as percentage
     row["Margin $"] = margin_dollars
     return row
 
@@ -303,7 +303,7 @@ if cost_file and export_file:
                      "Recovery %", "Recovery Input", "Raw Material Input Qty", "Raw Material Per LB Cost",
                      "Trim %", "Recovery", "Labour $", "Normal Sticker", "Material + Labour",
                      "New Final Cost (Lb)", "Billling UOM Cost", "Priced Sticker", "Final Cost",
-                     "Base Price", "List Price", "Base Margin%"}
+                     "Base Price", "List Price", "Base Margin %"}
     for i in range(1, 5):
         cost_required.update({f"Item-{i}", f"Qty-{i}", f"Unit $-{i}", f"Total $-{i}"})
     export_required = {"Product Code", "Cost Price", "Base Price", "Suggested Price"}
@@ -322,7 +322,7 @@ if cost_file and export_file:
     st.write('<div class="header">2. Update Product Cost</div>', unsafe_allow_html=True)
     trsm_code = st.text_input("TRSM Code to Update", "").strip()
     new_cost_price = st.number_input("New Cost Price", min_value=0.0, step=0.01, format="%.2f")
-    st.write("Note: Base Price uses 'Base Margin%' from the input cost file. List Price uses the 'List Margin%' below.")
+    st.write("Note: Base Price uses 'Base Margin %' from the input cost file. List Price uses the 'List Margin%' below.")
     list_margin_percent = st.number_input("List Margin % (e.g., 25 for 25%)", min_value=0.0, max_value=99.99, value=25.0, step=0.1) / 100
 
     if st.button("Apply Cost Changes"):
