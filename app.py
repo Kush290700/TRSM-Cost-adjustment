@@ -3,6 +3,7 @@ import pandas as pd
 import io
 from typing import Tuple, Optional, Set
 import logging
+import xlsxwriter
 from datetime import datetime
 
 # Set up logging
