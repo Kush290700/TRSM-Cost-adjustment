@@ -54,8 +54,8 @@ def get_freight_cost(vendor: str) -> float:
         return FREIGHT_RATES["Ontario/Quebec"]
     return DEFAULT_FREIGHT
 
-def calculate_actual_inv_cost(vendor_invoice_price: float, lb_per_billing_uom: float) -> float:
-    return vendor_invoice_price if lb_per_billing_uom == 0 else vendor_invoice_price / lb_per_billing_uom
+def calculate_actual_inv_cost(vendor_invoice_price: float, lb_per_billling_uom: float) -> float:
+    return vendor_invoice_price if lb_per_billling_uom == 0 else vendor_invoice_price / lb_per_billling_uom
 
 def calculate_market_cost(actual_inv_cost: float, adj: float) -> float:
     return actual_inv_cost + adj
@@ -84,11 +84,11 @@ def calculate_recovery(raw_material_per_lb: float, trim_percent: float) -> float
 def calculate_material_labour(net_input_cost: float, labour: float, sticker: float) -> float:
     return net_input_cost + labour + sticker
 
-def calculate_billing_uom_cost(new_final_cost_lb: float, lb_per_billing_uom: float) -> float:
-    return new_final_cost_lb * lb_per_billing_uom
+def calculate_billling_uom_cost(new_final_cost_lb: float, lb_per_billling_uom: float) -> float:
+    return new_final_cost_lb * lb_per_billling_uom
 
-def calculate_final_cost(billing_uom_cost: float, priced_sticker: float) -> float:
-    return billing_uom_cost + priced_sticker
+def calculate_final_cost(billling_uom_cost: float, priced_sticker: float) -> float:
+    return billling_uom_cost + priced_sticker
 
 def calculate_base_price(final_cost: float, base_margin_percent: float) -> float:
     if base_margin_percent >= 1:
@@ -139,9 +139,9 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     old_base_price = safe_float(original_row.get("Base Price") if original_row is not None else row.get("Base Price"))
     old_list_price = safe_float(original_row.get("List Price") if original_row is not None else row.get("List Price"))
 
-    lb_per_billing_uom = safe_float(row.get("lb Per Billling UOM", 1), 1)
+    lb_per_billling_uom = safe_float(row.get("lb Per Billling UOM", 1), 1)
     vendor_invoice_price = new_cost_price if new_cost_price is not None else safe_float(row.get("Vendor Invoice Price"))
-    actual_inv_cost = calculate_actual_inv_cost(vendor_invoice_price, lb_per_billing_uom)
+    actual_inv_cost = calculate_actual_inv_cost(vendor_invoice_price, lb_per_billling_uom)
     adj = safe_float(row.get("Adj", 0))
     market_cost = calculate_market_cost(actual_inv_cost, adj)
     freight = get_freight_cost(row.get("Supplier S Name", ""))
@@ -158,7 +158,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     sticker = safe_float(row.get("Normal Sticker", DEFAULT_STICKER), DEFAULT_STICKER)
     material_labour = calculate_material_labour(net_input_cost, labour, sticker)
     new_final_cost_lb = material_labour
-    billing_uom_cost = calculate_billing_uom_cost(new_final_cost_lb, lb_per_billing_uom)
+    billling_uom_cost = calculate_billling_uom_cost(new_final_cost_lb, lb_per_billling_uom)
     priced_sticker = safe_float(row.get("Priced Sticker", 0))
     final_cost = calculate_final_cost(billling_uom_cost, priced_sticker)
     base_price = calculate_base_price(final_cost, base_margin_percent)
@@ -180,7 +180,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     row["Material + Labour"] = material_labour
     row["New Final Cost (Lb)"] = new_final_cost_lb
     row["Old Final Cost"] = old_final_cost
-    row["Billing UOM Cost"] = billing_uom_cost
+    row["Billling UOM Cost"] = billling_uom_cost
     row["Final Cost"] = final_cost
     row["Old Base Price"] = old_base_price
     row["Base Price"] = base_price
