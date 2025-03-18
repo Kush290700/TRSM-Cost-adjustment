@@ -20,7 +20,7 @@ except ImportError:
     EXCEL_ENGINE = "openpyxl"
 
 # Constants
-VERSION = "1.0.7"  # Updated version to reflect changes
+VERSION = "1.0.8"  # Updated version to reflect changes
 DEFAULT_RECOVERY = 1.0
 DEFAULT_TRIM = 0.0
 DEFAULT_LABOUR = 0.0
@@ -110,12 +110,12 @@ def calculate_base_price(final_cost: float, base_margin_percent: float) -> float
         return final_cost
     return final_cost / (1 - base_margin_percent)
 
-def calculate_list_price(final_cost: float, list_margin_percent: float) -> float:
-    """Calculate List Price to achieve the specified margin."""
+def calculate_list_price(base_price: float, list_margin_percent: float) -> float:
+    """Calculate List Price to achieve the specified margin on Base Price."""
     if list_margin_percent >= 1:
-        logger.warning("List Margin % is 100% or higher, cannot calculate List Price. Using Final Cost.")
-        return final_cost
-    return final_cost / (1 - list_margin_percent)
+        logger.warning("List Margin % is 100% or higher, cannot calculate List Price. Using Base Price.")
+        return base_price
+    return base_price / (1 - list_margin_percent)
 
 def calculate_margin_dollars(base_price: float, final_cost: float) -> float:
     """Calculate Margin $ as Base Price - Final Cost."""
@@ -199,7 +199,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
 
     # Calculate Base Price and List Price using the specified margins
     base_price = calculate_base_price(final_cost, base_margin_percent)
-    list_price = calculate_list_price(final_cost, list_margin_percent)
+    list_price = calculate_list_price(base_price, list_margin_percent)  # Updated to use Base Price
     margin_dollars = calculate_margin_dollars(base_price, final_cost)
 
     # Update row with new and old values
