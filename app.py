@@ -22,7 +22,7 @@ except ImportError:
     st.warning("Using 'openpyxl'. Install 'xlsxwriter' for better performance: 'pip install xlsxwriter'.")
 
 # Constants
-VERSION = "1.0.9"
+VERSION = "1.0.4"
 DEFAULT_RECOVERY = 1.0
 DEFAULT_TRIM = 0.0
 DEFAULT_LABOUR = 0.0
