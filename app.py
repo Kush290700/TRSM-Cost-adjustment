@@ -27,8 +27,8 @@ DEFAULT_LABOUR = 0.0
 DEFAULT_STICKER = 0.0
 FREIGHT_RATES = {"PRAN": 0.07, "Local Pickup": 0.11, "Alberta": 0.205, "Ontario/Quebec": 0.25}
 DEFAULT_FREIGHT = 0.0
-DEFAULT_BASE_MARGIN = 0.17  # 17%
-LIST_MARGIN_INCREMENT = 0.17  # Additional 17% for List Price
+DEFAULT_BASE_MARGIN = 0.17  # 17% fallback if not in file
+DEFAULT_LIST_MARGIN = 0.25  # 25% default for List Margin
 
 # Helper Functions
 def clean_trsm_code(code: str) -> str:
@@ -90,18 +90,11 @@ def calculate_billling_uom_cost(new_final_cost_lb: float, lb_per_billling_uom: f
 def calculate_final_cost(billling_uom_cost: float, priced_sticker: float) -> float:
     return billling_uom_cost + priced_sticker
 
-def calculate_base_price(final_cost: float, base_margin_percent: float) -> float:
-    if base_margin_percent >= 1:
-        logger.warning("Base Margin % ≥ 100%, using Final Cost.")
+def calculate_price_from_margin(final_cost: float, margin_percent: float) -> float:
+    if margin_percent >= 1:
+        logger.warning("Margin % ≥ 100%, using Final Cost.")
         return final_cost
-    return final_cost / (1 - base_margin_percent)
-
-def calculate_list_price(final_cost: float, base_margin_percent: float) -> float:
-    list_margin_percent = base_margin_percent + LIST_MARGIN_INCREMENT
-    if list_margin_percent >= 1:
-        logger.warning("List Margin % ≥ 100%, using Final Cost.")
-        return final_cost
-    return final_cost / (1 - list_margin_percent)
+    return final_cost / (1 - margin_percent)
 
 def calculate_margin_dollars(base_price: float, final_cost: float) -> float:
     return base_price - final_cost
@@ -133,7 +126,7 @@ def validate_columns(df: pd.DataFrame, required_cols: set, sheet_name: str) -> b
         return False
     return True
 
-def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: pd.Series = None, base_margin_percent: float = DEFAULT_BASE_MARGIN) -> pd.Series:
+def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: pd.Series = None, list_margin_percent: float = DEFAULT_LIST_MARGIN) -> pd.Series:
     old_vendor_invoice = safe_float(original_row.get("Vendor Invoice Price") if original_row is not None else row.get("Vendor Invoice Price"))
     old_final_cost = safe_float(original_row.get("Final Cost") if original_row is not None else row.get("Final Cost"))
     old_base_price = safe_float(original_row.get("Base Price") if original_row is not None else row.get("Base Price"))
@@ -161,8 +154,16 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     billling_uom_cost = calculate_billling_uom_cost(new_final_cost_lb, lb_per_billling_uom)
     priced_sticker = safe_float(row.get("Priced Sticker", 0))
     final_cost = calculate_final_cost(billling_uom_cost, priced_sticker)
-    base_price = calculate_base_price(final_cost, base_margin_percent)
-    list_price = calculate_list_price(final_cost, base_margin_percent)
+
+    # Base Price uses Base Margin% from the input file
+    base_margin_percent = safe_float(row.get("Base Margin%", 0.0)) / 100  # Assuming percentage format
+    if base_margin_percent == 0.0:
+        base_margin_percent = DEFAULT_BASE_MARGIN  # Fallback if not provided
+    base_price = calculate_price_from_margin(final_cost, base_margin_percent)
+
+    # List Price uses user-provided List Margin%
+    list_price = calculate_price_from_margin(final_cost, list_margin_percent)
+
     margin_dollars = calculate_margin_dollars(base_price, final_cost)
 
     row["Price Change Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -188,11 +189,11 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     row["List Price"] = list_price
     row["Waste Output $"] = 0.0
     row["Trim Cost/LB"] = 0.0
-    row["Base Margin%"] = base_margin_percent * 100  # Display as percentage
+    row["Base Margin%"] = base_margin_percent * 100  # Store as percentage
     row["Margin $"] = margin_dollars
     return row
 
-def update_cost_sheet(df_cost: pd.DataFrame, trsm_code: str, new_cost_price: float, base_margin_percent: float) -> Tuple[pd.DataFrame, bool, Set[str]]:
+def update_cost_sheet(df_cost: pd.DataFrame, trsm_code: str, new_cost_price: float, list_margin_percent: float) -> Tuple[pd.DataFrame, bool, Set[str]]:
     df_updated = df_cost.copy()
     trsm_code_clean = clean_trsm_code(trsm_code)
     updated_flag = False
@@ -208,7 +209,7 @@ def update_cost_sheet(df_cost: pd.DataFrame, trsm_code: str, new_cost_price: flo
         st.write(f"Updating TRSM Code: {trsm_code_clean} with new cost: {new_cost_price}")
         for idx in df_updated[mask_main].index:
             original_row = df_cost.loc[idx]
-            df_updated.loc[idx] = update_cost_row(df_updated.loc[idx], new_cost_price, original_row, base_margin_percent)
+            df_updated.loc[idx] = update_cost_row(df_updated.loc[idx], new_cost_price, original_row, list_margin_percent)
         updated_trsm_codes.update(df_updated.loc[mask_main, "TRSM Code"])
         updated_flag = True
 
@@ -237,7 +238,7 @@ def update_cost_sheet(df_cost: pd.DataFrame, trsm_code: str, new_cost_price: flo
             updated_trsm_codes.update(df_updated.loc[composite_mask, "TRSM Code"])
             for idx in df_updated[composite_mask].index:
                 original_row = df_cost.loc[idx]
-                df_updated.loc[idx] = update_cost_row(df_updated.loc[idx], None, original_row, base_margin_percent)
+                df_updated.loc[idx] = update_cost_row(df_updated.loc[idx], None, original_row)
             updated_flag = True
         iteration += 1
 
@@ -302,7 +303,7 @@ if cost_file and export_file:
                      "Recovery %", "Recovery Input", "Raw Material Input Qty", "Raw Material Per LB Cost",
                      "Trim %", "Recovery", "Labour $", "Normal Sticker", "Material + Labour",
                      "New Final Cost (Lb)", "Billling UOM Cost", "Priced Sticker", "Final Cost",
-                     "Base Price", "List Price"}
+                     "Base Price", "List Price", "Base Margin%"}
     for i in range(1, 5):
         cost_required.update({f"Item-{i}", f"Qty-{i}", f"Unit $-{i}", f"Total $-{i}"})
     export_required = {"Product Code", "Cost Price", "Base Price", "Suggested Price"}
@@ -321,7 +322,8 @@ if cost_file and export_file:
     st.write('<div class="header">2. Update Product Cost</div>', unsafe_allow_html=True)
     trsm_code = st.text_input("TRSM Code to Update", "").strip()
     new_cost_price = st.number_input("New Cost Price", min_value=0.0, step=0.01, format="%.2f")
-    base_margin_percent = st.number_input("Base Margin % (e.g., 17 for 17%)", min_value=0.0, max_value=99.99, value=17.0, step=0.1) / 100
+    st.write("Note: Base Price uses 'Base Margin%' from the input cost file. List Price uses the 'List Margin%' below.")
+    list_margin_percent = st.number_input("List Margin % (e.g., 25 for 25%)", min_value=0.0, max_value=99.99, value=25.0, step=0.1) / 100
 
     if st.button("Apply Cost Changes"):
         if not trsm_code:
@@ -329,7 +331,7 @@ if cost_file and export_file:
             st.stop()
 
         try:
-            df_cost_updated, cost_updated, updated_trsm_codes = update_cost_sheet(df_cost, trsm_code, new_cost_price, base_margin_percent)
+            df_cost_updated, cost_updated, updated_trsm_codes = update_cost_sheet(df_cost, trsm_code, new_cost_price, list_margin_percent)
             df_export_updated, export_updated = update_export_sheet(df_export, df_cost_updated, updated_trsm_codes)
 
             if cost_updated or export_updated:
