@@ -35,11 +35,23 @@ DEFAULT_LIST_MARGIN = 0.25  # 25% default for List Margin
 def clean_trsm_code(code: str) -> str:
     """
     Clean TRSM code by:
-      1) Removing trailing '.0'
+      1) Converting float-like strings to int if .0
       2) Removing commas
     """
-    code_str = str(code).rstrip('.0')
-    code_str = code_str.replace(",", "")  # remove commas entirely
+    code_str = str(code).strip()
+    # Attempt to parse as float
+    try:
+        val = float(code_str.replace(",", ""))  # remove commas before float
+        # If it's an integer value (like 10150.0), convert to int -> '10150'
+        if val.is_integer():
+            code_str = str(int(val))
+        else:
+            # Keep the float as-is if it has a decimal portion
+            code_str = str(val)
+    except ValueError:
+        # If not float-like, just remove commas
+        code_str = code_str.replace(",", "")
+
     return code_str
 
 def safe_float(value, default: float = 0.0) -> float:
@@ -139,9 +151,9 @@ def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: 
 
         # IMPORTANT: Clean TRSM codes and Product codes immediately
         if "TRSM Code" in df_cost.columns:
-            df_cost["TRSM Code"] = df_cost["TRSM Code"].astype(str).apply(clean_trsm_code)
+            df_cost["TRSM Code"] = df_cost["TRSM Code"].apply(clean_trsm_code)
         if "Product Code" in df_export.columns:
-            df_export["Product Code"] = df_export["Product Code"].astype(str).apply(clean_trsm_code)
+            df_export["Product Code"] = df_export["Product Code"].apply(clean_trsm_code)
 
         if df_cost.empty or df_export.empty:
             st.error("One or both sheets are empty.")
@@ -287,7 +299,7 @@ def update_cost_sheet(
     updated_trsm_codes = set()
 
     # Ensure TRSM codes are properly formatted
-    df_updated["TRSM Code"] = df_updated["TRSM Code"].astype(str).apply(clean_trsm_code)
+    df_updated["TRSM Code"] = df_updated["TRSM Code"].apply(clean_trsm_code)
     
     # Initialize history columns if they don't exist
     for col in ["Old Vendor Invoice Price", "Old Final Cost", "Old Base Price", "Old List Price", "Price Change Date"]:
@@ -323,7 +335,7 @@ def update_cost_sheet(
                 continue
                 
             # Clean TRSM codes in item columns
-            df_updated[item_col] = df_updated[item_col].astype(str).apply(clean_trsm_code)
+            df_updated[item_col] = df_updated[item_col].apply(clean_trsm_code)
             
             # Find items that use updated TRSM codes as inputs
             mask_item = df_updated[item_col].isin(updated_trsm_codes)
@@ -373,7 +385,7 @@ def update_export_sheet(
     updated_flag = False
 
     # Ensure product codes are properly formatted
-    df_export_updated["Product Code"] = df_export_updated["Product Code"].astype(str).apply(clean_trsm_code)
+    df_export_updated["Product Code"] = df_export_updated["Product Code"].apply(clean_trsm_code)
     
     for trsm_code in updated_trsm_codes:
         # Find the updated cost information
