@@ -33,8 +33,14 @@ DEFAULT_LIST_MARGIN = 0.25  # 25% default for List Margin
 
 # Helper Functions
 def clean_trsm_code(code: str) -> str:
-    """Clean TRSM code by removing trailing '.0'."""
-    return str(code).rstrip('.0')
+    """
+    Clean TRSM code by:
+      1) Removing trailing '.0'
+      2) Removing commas
+    """
+    code_str = str(code).rstrip('.0')
+    code_str = code_str.replace(",", "")  # remove commas entirely
+    return code_str
 
 def safe_float(value, default: float = 0.0) -> float:
     """Convert value to float safely, returning default if conversion fails."""
