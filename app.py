@@ -148,14 +148,15 @@ def validate_columns(df: pd.DataFrame, required_cols: set, sheet_name: str) -> b
         return False
     return True
 
-def update_cost_row(row: pd.Series,
-                    new_cost_price: float = None,
-                    original_row: pd.Series = None,
-                    list_margin_percent: float = DEFAULT_LIST_MARGIN) -> pd.Series:
+def update_cost_row(
+    row: pd.Series,
+    new_cost_price: float = None,
+    original_row: pd.Series = None,
+    list_margin_percent: float = DEFAULT_LIST_MARGIN
+) -> pd.Series:
     """
     Update a single row in the cost sheet with new calculations.
-    Fix included: properly interpret 'Base Margin %' whether it is stored
-    as '17' or '0.17' in the file.
+    The final List Price is now based on Final Cost (not Base Price).
     """
     old_vendor_invoice = safe_float(original_row.get("Vendor Invoice Price") if original_row is not None else row.get("Vendor Invoice Price"))
     old_final_cost = safe_float(original_row.get("Final Cost") if original_row is not None else row.get("Final Cost"))
@@ -206,7 +207,6 @@ def update_cost_row(row: pd.Series,
     # ---- FIX FOR BASE MARGIN % ----
     # If the sheet has "17" we treat it as 17%. If it has "0.17" we treat that as 17% in decimal form.
     base_margin_value = safe_float(row.get("Base Margin %", 0.0))
-    # If zero, fallback to default
     if base_margin_value == 0.0:
         base_margin_value = DEFAULT_BASE_MARGIN  # 0.17
 
@@ -219,10 +219,10 @@ def update_cost_row(row: pd.Series,
     # Calculate base price (using decimal, e.g. 0.17)
     base_price = calculate_price_from_margin(final_cost, base_margin_decimal)
 
-    # Now apply the list margin (already in decimal form from user input, e.g. 25% => 0.25)
-    list_price = calculate_price_from_margin(base_price, list_margin_percent)
+    # NOTE: CHANGED TO CALCULATE LIST PRICE FROM FINAL COST
+    list_price = calculate_price_from_margin(final_cost, list_margin_percent)
 
-    # Calculate Margin $
+    # Calculate Margin $ (based on Base Price - Final Cost)
     margin_dollars = calculate_margin_dollars(base_price, final_cost)
 
     # Log calculations for verification
@@ -256,14 +256,15 @@ def update_cost_row(row: pd.Series,
 
     # We store 'Base Margin %' back as an integer-based percentage for clarity, e.g. 17.0 for 17%
     row["Base Margin %"] = base_margin_decimal * 100
-
     row["Margin $"] = margin_dollars 
     return row
 
-def update_cost_sheet(df_cost: pd.DataFrame,
-                      trsm_code: str,
-                      new_cost_price: float,
-                      list_margin_percent: float) -> Tuple[pd.DataFrame, bool, Set[str]]:
+def update_cost_sheet(
+    df_cost: pd.DataFrame,
+    trsm_code: str,
+    new_cost_price: float,
+    list_margin_percent: float
+) -> Tuple[pd.DataFrame, bool, Set[str]]:
     """Update the cost sheet for a given TRSM code."""
     df_updated = df_cost.copy()
     trsm_code_clean = clean_trsm_code(trsm_code)
@@ -347,9 +348,11 @@ def update_cost_sheet(df_cost: pd.DataFrame,
         
     return df_updated, updated_flag, updated_trsm_codes
 
-def update_export_sheet(df_export: pd.DataFrame,
-                        df_cost_updated: pd.DataFrame,
-                        updated_trsm_codes: Set[str]) -> Tuple[pd.DataFrame, bool]:
+def update_export_sheet(
+    df_export: pd.DataFrame,
+    df_cost_updated: pd.DataFrame,
+    updated_trsm_codes: Set[str]
+) -> Tuple[pd.DataFrame, bool]:
     """Update the export sheet based on updated cost sheet."""
     df_export_updated = df_export.copy()
     updated_flag = False
@@ -442,7 +445,7 @@ if cost_file and export_file:
     st.write('<div class="header">2. Update Product Cost</div>', unsafe_allow_html=True)
     trsm_code = st.text_input("TRSM Code to Update", "").strip()
     new_cost_price = st.number_input("New Cost Price", min_value=0.0, step=0.01, format="%.2f")
-    st.write("Note: Base Price uses 'Base Margin %' from the input cost file. List Price uses the 'List Margin%' below.")
+    st.write("Note: Base Price uses 'Base Margin %' from the input cost file. List Price now uses the 'List Margin%' below *based on Final Cost*.")
     list_margin_percent_input = st.number_input("List Margin % (e.g., 25 for 25%)", min_value=0.0, max_value=99.99, value=25.0, step=0.1)
     list_margin_percent = list_margin_percent_input / 100.0  # convert e.g. 25 → 0.25
 
