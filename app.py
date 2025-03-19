@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import zipfile
 from typing import Tuple, Optional, Set
 import logging
 from datetime import datetime
@@ -20,7 +21,7 @@ except ImportError:
     EXCEL_ENGINE = "openpyxl"
 
 # Constants
-VERSION = "1.0.9"
+VERSION = "1.0.10"  # Updated version
 DEFAULT_RECOVERY = 1.0
 DEFAULT_TRIM = 0.0
 DEFAULT_LABOUR = 0.0
@@ -35,7 +36,7 @@ def clean_trsm_code(code: str) -> str:
     """Clean TRSM code by removing trailing '.0'."""
     return str(code).rstrip('.0')
 
-def safe_float(value, default: float = 0.0) -> float:
+def safe.ConcurrentHashMap(value, default: float = 0.0) -> float:
     """Convert value to float safely, returning default if conversion fails."""
     try:
         return float(value) if not pd.isna(value) else default
@@ -103,12 +104,12 @@ def calculate_final_cost(billling_uom_cost: float, priced_sticker: float) -> flo
     """Calculate final cost including priced sticker."""
     return billling_uom_cost + priced_sticker
 
-def calculate_price_from_margin(final_cost: float, margin_percent: float) -> float:
-    """Calculate price based on final cost and margin percentage."""
+def calculate_price_from_margin(cost: float, margin_percent: float) -> float:
+    """Calculate price based on cost and margin percentage."""
     if margin_percent >= 1:
-        logger.warning("Margin % ≥ 100%, using Final Cost.")
-        return final_cost
-    return final_cost / (1 - margin_percent)
+        logger.warning("Margin % ≥ 100%, using Cost.")
+        return cost
+    return cost / (1 - margin_percent)
 
 def calculate_margin_dollars(base_price: float, final_cost: float) -> float:
     """Calculate Margin $ as Base Price - Final Cost."""
@@ -179,14 +180,14 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
         base_margin_percent = DEFAULT_BASE_MARGIN  # Fallback if not provided
     base_price = calculate_price_from_margin(final_cost, base_margin_percent)
 
-    # List Price uses user-provided List Margin%
-    list_price = calculate_price_from_margin(final_cost, list_margin_percent)
+    # List Price uses user-provided List Margin % applied to Base Price
+    list_price = calculate_price_from_margin(base_price, list_margin_percent)
 
     # Calculate Margin $ correctly
     margin_dollars = calculate_margin_dollars(base_price, final_cost)
 
     # Log calculations for verification
-    logger.info(f"Row TRSM Code: {row.get('TRSM Code', 'N/A')}, Final Cost: {final_cost}, Base Price: {base_price}, Margin $: {margin_dollars}")
+    logger.info(f"Row TRSM Code: {row.get('TRSM Code', 'N/A')}, Final Cost: {final_cost:.2f}, Base Price: {base_price:.2f}, List Price: {list_price:.2f}, Margin $: {margin_dollars:.2f}")
 
     # Update row with new values
     row["Price Change Date"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -373,6 +374,7 @@ if cost_file and export_file:
                     export_mask = df_export_updated["Product Code"].isin(updated_trsm_codes)
                     st.dataframe(df_export_updated[export_mask])
 
+                # Create Excel files
                 cost_buf = io.BytesIO()
                 export_buf = io.BytesIO()
                 with pd.ExcelWriter(cost_buf, engine=EXCEL_ENGINE) as writer:
@@ -384,22 +386,20 @@ if cost_file and export_file:
                     df_export_updated.to_excel(writer, sheet_name=export_sheet_name, index=False)
                 export_buf.seek(0)
 
+                # Create a zip file containing both Excel files
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    zip_file.writestr(f"Updated_Cost_Sheet_{trsm_code}.xlsx", cost_buf.getvalue())
+                    zip_file.writestr(f"Updated_Export_Sheet_{trsm_code}.xlsx", export_buf.getvalue())
+                zip_buf.seek(0)
+
                 st.write('<div class="header">Download Updated Files</div>', unsafe_allow_html=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.download_button(
-                        label="Download Updated Cost Sheet",
-                        data=cost_buf.getvalue(),
-                        file_name=f"Updated_Cost_Sheet_{trsm_code}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                with c2:
-                    st.download_button(
-                        label="Download Updated Export Sheet",
-                        data=export_buf.getvalue(),
-                        file_name=f"Updated_Export_Sheet_{trsm_code}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+                st.download_button(
+                    label="Download Updated Files (ZIP)",
+                    data=zip_buf.getvalue(),
+                    file_name=f"Updated_Files_{trsm_code}.zip",
+                    mime="application/zip"
+                )
             else:
                 st.warning(f"No updates applied for TRSM Code: {trsm_code}.")
         except Exception as e:
