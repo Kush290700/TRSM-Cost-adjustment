@@ -174,7 +174,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     final_cost = calculate_final_cost(billling_uom_cost, priced_sticker)
 
     # Base Price uses Base Margin % from the input file
-    base_margin_percent = safe_float(row.get("Base Margin %", 0.0)) / 100  # Assuming percentage format
+    base_margin_percent = safe_float(row.get("Base Margin %", 0.0)) # Assuming percentage format
     if base_margin_percent == 0.0:
         base_margin_percent = DEFAULT_BASE_MARGIN  # Fallback if not provided
     base_price = calculate_price_from_margin(final_cost, base_margin_percent)
