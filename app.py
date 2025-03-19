@@ -36,7 +36,7 @@ def clean_trsm_code(code: str) -> str:
     """Clean TRSM code by removing trailing '.0'."""
     return str(code).rstrip('.0')
 
-def safe.ConcurrentHashMap(value, default: float = 0.0) -> float:
+def safe_float(value, default: float = 0.0) -> float:
     """Convert value to float safely, returning default if conversion fails."""
     try:
         return float(value) if not pd.isna(value) else default
