@@ -132,8 +132,17 @@ def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: 
         df_cost = pd.read_excel(cost_file, sheet_name=cost_sheet_name, engine="openpyxl")
         other_sheets = {sheet: excel_cost.parse(sheet) for sheet in excel_cost.sheet_names if sheet != cost_sheet_name}
         df_export = pd.read_excel(export_file, sheet_name=export_sheet_name, engine="openpyxl")
+
+        # Strip extra spaces/newlines from columns
         df_cost.columns = [col.strip().replace('\n', ' ') for col in df_cost.columns]
         df_export.columns = [col.strip().replace('\n', ' ') for col in df_export.columns]
+
+        # IMPORTANT: Clean TRSM codes and Product codes immediately
+        if "TRSM Code" in df_cost.columns:
+            df_cost["TRSM Code"] = df_cost["TRSM Code"].astype(str).apply(clean_trsm_code)
+        if "Product Code" in df_export.columns:
+            df_export["Product Code"] = df_export["Product Code"].astype(str).apply(clean_trsm_code)
+
         if df_cost.empty or df_export.empty:
             st.error("One or both sheets are empty.")
             return None, None, None
@@ -162,7 +171,7 @@ def update_cost_row(
 ) -> pd.Series:
     """
     Update a single row in the cost sheet with new calculations.
-    The final List Price is now based on Final Cost (not Base Price).
+    The final List Price is based on Final Cost (not Base Price).
     """
     old_vendor_invoice = safe_float(original_row.get("Vendor Invoice Price") if original_row is not None else row.get("Vendor Invoice Price"))
     old_final_cost = safe_float(original_row.get("Final Cost") if original_row is not None else row.get("Final Cost"))
@@ -195,7 +204,7 @@ def update_cost_row(
     raw_material_per_lb = calculate_raw_material_per_lb_cost(input_cost, raw_material_input_qty)
     
     # Calculate trim and recovery
-    trim_percent = safe_float(row.get("Trim %", DEFAULT_TRIM), DEFAULT_TRIM)
+    trim_percent = safe_float(row.get("Trim %", 0.0), 0.0)
     recovery = calculate_recovery(raw_material_per_lb, trim_percent)
     net_input_cost = recovery
     
@@ -225,7 +234,7 @@ def update_cost_row(
     # Calculate base price (using decimal, e.g. 0.17)
     base_price = calculate_price_from_margin(final_cost, base_margin_decimal)
 
-    # NOTE: CHANGED TO CALCULATE LIST PRICE FROM FINAL COST
+    # Calculate list price from Final Cost (not from Base Price)
     list_price = calculate_price_from_margin(final_cost, list_margin_percent)
 
     # Calculate Margin $ (based on Base Price - Final Cost)
