@@ -21,7 +21,7 @@ except ImportError:
     EXCEL_ENGINE = "openpyxl"
 
 # Constants
-VERSION = "1.0.10"  # Updated version
+VERSION = "1.0.11"  # Updated version
 DEFAULT_RECOVERY = 1.0
 DEFAULT_TRIM = 0.0
 DEFAULT_LABOUR = 0.0
@@ -175,7 +175,7 @@ def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: 
     final_cost = calculate_final_cost(billling_uom_cost, priced_sticker)
 
     # Base Price uses Base Margin % from the input file
-    base_margin_percent = safe_float(row.get("Base Margin %", 0.0)) / 100  # Assuming percentage format
+    base_margin_percent = safe_float(row.get("Base Margin %", 0.0)) / 10000  # Interpret as 0.1928% (divide by 10000 instead of 100)
     if base_margin_percent == 0.0:
         base_margin_percent = DEFAULT_BASE_MARGIN  # Fallback if not provided
     base_price = calculate_price_from_margin(final_cost, base_margin_percent)
