@@ -10,10 +10,10 @@ from datetime import datetime
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("TRSM_Cost_Adjustment")
 
-# Page configuration
+# Page config
 st.set_page_config(page_title="TRSM Cost Adjustment Tool", layout="wide")
 
-# Excel engine selection
+# Try xlsxwriter first, else openpyxl
 try:
     import xlsxwriter
     EXCEL_ENGINE = "xlsxwriter"
@@ -21,22 +21,28 @@ except ImportError:
     EXCEL_ENGINE = "openpyxl"
 
 # Constants
-VERSION = "1.0.12"  # Updated version
+VERSION = "1.0.12"
 DEFAULT_RECOVERY = 1.0
 DEFAULT_TRIM = 0.0
 DEFAULT_LABOUR = 0.0
 DEFAULT_STICKER = 0.0
-FREIGHT_RATES = {"PRAN": 0.07, "Local Pickup": 0.11, "Alberta": 0.205, "Ontario/Quebec": 0.25}
-DEFAULT_FREIGHT = 0.0
-DEFAULT_BASE_MARGIN = 0.17  # 17% fallback if not in file (as decimal)
-DEFAULT_LIST_MARGIN = 0.25  # 25% default for List Margin
 
+FREIGHT_RATES = {
+    "PRAN": 0.07,
+    "Local Pickup": 0.11,
+    "Alberta": 0.205,
+    "Ontario/Quebec": 0.25
+}
+DEFAULT_FREIGHT = 0.0
+DEFAULT_BASE_MARGIN = 0.17   # 17% in decimal
+DEFAULT_LIST_MARGIN = 0.25   # 25% in decimal
+
+# ------------------------------------------------------------------------------
 # Helper Functions
+# ------------------------------------------------------------------------------
 def clean_trsm_code(code: str) -> str:
     """
-    Clean TRSM code by:
-      1) Converting float-like strings to int if .0
-      2) Removing commas
+    Clean TRSM code by removing commas and trailing .0
     """
     code_str = str(code).strip()
     try:
@@ -50,14 +56,14 @@ def clean_trsm_code(code: str) -> str:
     return code_str
 
 def safe_float(value, default: float = 0.0) -> float:
-    """Safely convert a value to float, else return default."""
+    """Safely convert a value to float; return default if it fails."""
     try:
         return float(value) if not pd.isna(value) else default
     except (ValueError, TypeError):
         return default
 
 def get_freight_cost(vendor: str) -> float:
-    """Return the freight cost for a vendor name, if recognized."""
+    """Return the freight cost based on vendor name."""
     vendor = str(vendor).strip()
     if not vendor:
         return DEFAULT_FREIGHT
@@ -72,28 +78,27 @@ def get_freight_cost(vendor: str) -> float:
     return DEFAULT_FREIGHT
 
 def calculate_actual_inv_cost(vendor_invoice_price: float, lb_per_billling_uom: float) -> float:
-    """Formula 2: Actual Inv Cost(lb) = Vendor Invoice Price / lb Per Billling UOM."""
+    """Actual Inv Cost(lb) = vendor_invoice_price / lb_per_billling_uom."""
     return vendor_invoice_price if lb_per_billling_uom == 0 else vendor_invoice_price / lb_per_billling_uom
 
 def calculate_market_cost(actual_inv_cost: float, adj: float) -> float:
-    """Formula 3: Market Cost = Actual Inv Cost(lb) + Adj."""
+    """Market Cost = actual_inv_cost + adj."""
     return actual_inv_cost + adj
 
 def calculate_landed_cost(market_cost: float, freight: float) -> float:
-    """Formula 4: Landed Cost = Market Cost + Freight."""
+    """Landed Cost = market_cost + freight."""
     return market_cost + freight
 
 def calculate_recovery_input(market_cost: float, freight: float, recovery_percent: float) -> float:
     """
-    Formula 5: Recovery Input = (Market Cost + Freight) / Recovery %
-    Return 0 if recovery_percent is 0 to avoid division by zero.
+    Recovery Input = (market_cost + freight) / recovery_percent
+    Avoid division by zero if recovery_percent = 0
     """
     return (market_cost + freight) / recovery_percent if recovery_percent != 0 else 0.0
 
 def compute_totals_for_inputs(row: pd.Series) -> pd.Series:
     """
     For each of the 4 item columns, recalc Total $-i = Qty-i * Unit $-i.
-    This ensures that if Qty or Unit cost changes, Total is updated.
     """
     for i in range(1, 5):
         qty = safe_float(row.get(f"Qty-{i}"), 0.0)
@@ -103,8 +108,7 @@ def compute_totals_for_inputs(row: pd.Series) -> pd.Series:
 
 def calculate_raw_material_per_lb_cost(row: pd.Series) -> float:
     """
-    Formula 1: Raw Material Per LB Cost = sum(Total $-1 to Total $-4).
-    (We first recalc the Totals above to ensure they're up to date.)
+    Raw Material Per LB Cost = sum(Total $-1..4).
     """
     total = 0.0
     for i in range(1, 5):
@@ -113,7 +117,7 @@ def calculate_raw_material_per_lb_cost(row: pd.Series) -> float:
 
 def calculate_waste_output(raw_material_cost: float, recovery_percent: float) -> float:
     """
-    Formula 6: Waste Output = (Raw Material Per LB Cost / Recovery %) - Raw Material Per LB Cost
+    Waste Output = (raw_material_cost / recovery_percent) - raw_material_cost
     """
     if recovery_percent == 0:
         return 0.0
@@ -121,36 +125,41 @@ def calculate_waste_output(raw_material_cost: float, recovery_percent: float) ->
 
 def calculate_recovery(trim_cost_lb: float, trim_percent: float, recovery_percent: float) -> float:
     """
-    Formula 7: Recovery = (Trim Cost/LB * Trim %) / Recovery %
+    Recovery = (trim_cost_lb * trim_percent) / recovery_percent
     """
     if recovery_percent == 0:
         return 0.0
     return (trim_cost_lb * trim_percent) / recovery_percent
 
 def calculate_price_from_margin(cost: float, margin_percent: float) -> float:
-    """Compute price from cost & margin. If margin ≥1, fallback to cost."""
+    """Compute price from cost & margin. If margin≥1 => fallback to cost."""
     if margin_percent >= 1:
         logger.warning(f"Margin % ≥ 100% ({margin_percent}), using cost.")
         return cost
     return cost / (1 - margin_percent)
 
 def calculate_margin_dollars(base_price: float, final_cost: float) -> float:
-    """Margin $ = Base Price - Final Cost."""
+    """Margin $ = base_price - final_cost."""
     return base_price - final_cost
 
-def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: str) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame], Optional[dict]]:
-    """Read cost and export Excel files and do basic cleaning."""
+# ------------------------------------------------------------------------------
+# Reading Excel
+# ------------------------------------------------------------------------------
+def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: str):
+    """Read cost and export Excel files, do basic cleaning."""
     try:
         excel_cost = pd.ExcelFile(cost_file)
         df_cost = pd.read_excel(cost_file, sheet_name=cost_sheet_name, engine="openpyxl")
-        other_sheets = {sheet: excel_cost.parse(sheet) for sheet in excel_cost.sheet_names if sheet != cost_sheet_name}
+        other_sheets = {
+            sheet: excel_cost.parse(sheet)
+            for sheet in excel_cost.sheet_names
+            if sheet != cost_sheet_name
+        }
         df_export = pd.read_excel(export_file, sheet_name=export_sheet_name, engine="openpyxl")
 
-        # Clean up columns
         df_cost.columns = [col.strip().replace('\n', ' ') for col in df_cost.columns]
         df_export.columns = [col.strip().replace('\n', ' ') for col in df_export.columns]
 
-        # Clean TRSM and Product codes
         if "TRSM Code" in df_cost.columns:
             df_cost["TRSM Code"] = df_cost["TRSM Code"].apply(clean_trsm_code)
         if "Product Code" in df_export.columns:
@@ -159,7 +168,6 @@ def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: 
         if df_cost.empty or df_export.empty:
             st.error("One or both sheets are empty.")
             return None, None, None
-
         return df_cost, df_export, other_sheets
 
     except ValueError as e:
@@ -170,7 +178,6 @@ def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: 
         return None, None, None
 
 def validate_columns(df: pd.DataFrame, required_cols: set, sheet_name: str) -> bool:
-    """Check that required columns exist in the given DataFrame."""
     available_cols = set(df.columns)
     missing = required_cols - available_cols
     if missing:
@@ -178,30 +185,30 @@ def validate_columns(df: pd.DataFrame, required_cols: set, sheet_name: str) -> b
         return False
     return True
 
+# ------------------------------------------------------------------------------
+# The main update function for a single row
+# ------------------------------------------------------------------------------
 def update_cost_row(
     row: pd.Series,
     new_cost_price: float = None,
-    original_row: pd.Series = None,
-    list_margin_percent: float = DEFAULT_LIST_MARGIN
+    original_row: pd.Series = None
 ) -> pd.Series:
     """
-    This function updates a single row with the following steps:
+    Update a single row with the logic:
 
-      * First, we recalc "Total $-i" for i in [1..4] = "Qty-i" * "Unit $-i".
-      * Then we apply the logic:
-        1. raw_material_cost = sum of "Total $-1..4"
-        2. actual_inv_cost = vendor_invoice_price / lb_per_billling_uom
-        3. market_cost = actual_inv_cost + adj
-        4. landed_cost = market_cost + freight
-        5. recovery_input = (market_cost + freight) / recovery%
-        6. waste_output = (raw_material_cost / recovery%) - raw_material_cost
-        7. recovery = (Trim Cost/LB * Trim %) / recovery%
-        8. input_cost = recovery_input + raw_material_cost + waste_output
-        9. net_input_cost = input_cost - recovery
-        10. new_final_cost_lb = net_input_cost + labour + sticker
-        11. billling_uom_cost = new_final_cost_lb * lb_per_billling_uom + column1
-        12. final_cost = billling_uom_cost + priced_sticker
-        13. base_price & list_price from final_cost
+      1) Recompute Totals for items
+      2) raw_material_cost
+      3) actual_inv_cost
+      4) market_cost
+      5) landed_cost
+      6) recovery_input
+      7) waste_output
+      8) recovery
+      9) input_cost
+      10) net_input_cost
+      11) new_final_cost_lb
+      12) final_cost
+      13) base_price from Base Margin %, list_price from List Margin %
     """
     # Keep old columns for reference
     old_vendor_invoice = safe_float(original_row.get("Vendor Invoice Price") if original_row is not None else row.get("Vendor Invoice Price"))
@@ -209,21 +216,21 @@ def update_cost_row(
     old_base_price = safe_float(original_row.get("Base Price") if original_row is not None else row.get("Base Price"))
     old_list_price = safe_float(original_row.get("List Price") if original_row is not None else row.get("List Price"))
 
-    # 0) Recompute Totals: "Total $-i" = "Qty-i" * "Unit $-i"
+    # 0) Recompute Totals
     row = compute_totals_for_inputs(row)
 
-    # 1) Actual Inv Cost(lb)
+    # 1) Actual Inv Cost
     lb_per_billling_uom = safe_float(row.get("lb Per Billling UOM", 1), 1)
     vendor_invoice_price = new_cost_price if new_cost_price is not None else safe_float(row.get("Vendor Invoice Price"))
     actual_inv_cost = calculate_actual_inv_cost(vendor_invoice_price, lb_per_billling_uom)
 
-    # 2) Market Cost & Landed Cost
+    # 2) Market / Landed
     adj = safe_float(row.get("Adj", 0))
     market_cost = calculate_market_cost(actual_inv_cost, adj)
     freight = get_freight_cost(row.get("Supplier S Name", ""))
     landed_cost = calculate_landed_cost(market_cost, freight)
 
-    # 3) Recovery % => interpret user input as integer-based if >1
+    # 3) Recovery %
     raw_recovery_val = safe_float(row.get("Recovery %", DEFAULT_RECOVERY), DEFAULT_RECOVERY)
     if raw_recovery_val > 1.0:
         raw_recovery_val = raw_recovery_val / 100.0
@@ -240,7 +247,7 @@ def update_cost_row(
     # 6) Waste Output
     waste_output = calculate_waste_output(raw_material_cost, recovery_percent)
 
-    # 7) Recovery = (Trim Cost/LB * Trim %) / Recovery %
+    # 7) Recovery
     trim_percent = safe_float(row.get("Trim %", DEFAULT_TRIM))
     trim_cost_lb = safe_float(row.get("Trim Cost/LB", 0.0))
     recovery = calculate_recovery(trim_cost_lb, trim_percent, recovery_percent)
@@ -264,7 +271,7 @@ def update_cost_row(
     priced_sticker = safe_float(row.get("Priced Sticker", 0))
     final_cost = billling_uom_cost + priced_sticker
 
-    # 13) Base Price & List Price
+    # 13) Base Price from "Base Margin %"
     base_margin_value = safe_float(row.get("Base Margin %", 0.0))
     if base_margin_value == 0.0:
         base_margin_value = DEFAULT_BASE_MARGIN
@@ -273,11 +280,19 @@ def update_cost_row(
     else:
         base_margin_decimal = base_margin_value
     base_price = calculate_price_from_margin(final_cost, base_margin_decimal)
-    list_price = calculate_price_from_margin(final_cost, list_margin_percent)
+
+    # Now read "List Margin %" from the cost sheet
+    list_margin_value = safe_float(row.get("List Margin %", 0.0))
+    if list_margin_value == 0.0:
+        list_margin_value = DEFAULT_LIST_MARGIN
+    elif list_margin_value > 1.0:
+        list_margin_value = list_margin_value / 100.0
+
+    list_price = calculate_price_from_margin(final_cost, list_margin_value)
     margin_dollars = calculate_margin_dollars(base_price, final_cost)
 
     # Logging
-    logger.info(f"TRSM Code: {row.get('TRSM Code', 'N/A')}, Recovery%: {recovery_percent:.2f}, Waste Output: {waste_output:.2f}")
+    logger.info(f"Row TRSM Code: {row.get('TRSM Code', 'N/A')}")
     logger.info(f"Final Cost: {final_cost:.2f}, Base Price: {base_price:.2f}, List Price: {list_price:.2f}, Margin: {margin_dollars:.2f}")
 
     # Store updated fields
@@ -315,21 +330,25 @@ def update_cost_row(
 
     return row
 
+# ------------------------------------------------------------------------------
+# Updating the cost sheet for a given TRSM code
+# ------------------------------------------------------------------------------
 def update_cost_sheet(
     df_cost: pd.DataFrame,
     trsm_code: str,
-    new_cost_price: float,
-    list_margin_percent: float
+    new_cost_price: float
 ) -> Tuple[pd.DataFrame, bool, Set[str]]:
+    """
+    We do NOT ask for list_margin_percent from the UI. We read "List Margin %" from each row in df_cost.
+    """
     df_updated = df_cost.copy()
     trsm_code_clean = clean_trsm_code(trsm_code)
     updated_flag = False
     updated_trsm_codes = set()
 
-    # Clean TRSM code in the DataFrame
     df_updated["TRSM Code"] = df_updated["TRSM Code"].apply(clean_trsm_code)
 
-    # Initialize history columns if they don't exist
+    # Initialize columns for history if missing
     for col in ["Old Vendor Invoice Price", "Old Final Cost", "Old Base Price", "Old List Price", "Price Change Date"]:
         if col not in df_updated.columns:
             df_updated[col] = None
@@ -341,15 +360,14 @@ def update_cost_sheet(
         for idx in df_updated[mask_main].index:
             original_row = df_cost.loc[idx]
             df_updated.loc[idx] = update_cost_row(
-                df_updated.loc[idx],
+                row=df_updated.loc[idx],
                 new_cost_price=new_cost_price,
-                original_row=original_row,
-                list_margin_percent=list_margin_percent
+                original_row=original_row
             )
         updated_trsm_codes.update(df_updated.loc[mask_main, "TRSM Code"])
         updated_flag = True
 
-    # 2) Iteratively update items that use the updated TRSM codes as inputs
+    # 2) Iteratively update items that use the updated TRSM codes
     item_cols = [c for c in df_updated.columns if c.startswith("Item-")]
     to_update = True
     iteration = 0
@@ -358,10 +376,10 @@ def update_cost_sheet(
         composite_mask = pd.Series(False, index=df_updated.index)
         
         for item_col in item_cols:
-            # The matching "Unit $-i" column
             unit_col = f"Unit $-{item_col.split('-')[1]}"
             if unit_col not in df_updated.columns:
                 continue
+
             df_updated[item_col] = df_updated[item_col].apply(clean_trsm_code)
             mask_item = df_updated[item_col].isin(updated_trsm_codes)
 
@@ -379,10 +397,9 @@ def update_cost_sheet(
             for idx in df_updated[composite_mask].index:
                 original_row = df_cost.loc[idx]
                 df_updated.loc[idx] = update_cost_row(
-                    df_updated.loc[idx],
+                    row=df_updated.loc[idx],
                     new_cost_price=None,
-                    original_row=original_row,
-                    list_margin_percent=list_margin_percent
+                    original_row=original_row
                 )
             updated_flag = True
 
@@ -393,6 +410,9 @@ def update_cost_sheet(
 
     return df_updated, updated_flag, updated_trsm_codes
 
+# ------------------------------------------------------------------------------
+# Update the export sheet
+# ------------------------------------------------------------------------------
 def update_export_sheet(
     df_export: pd.DataFrame,
     df_cost_updated: pd.DataFrame,
@@ -424,7 +444,9 @@ def update_export_sheet(
             
     return df_export_updated, updated_flag
 
-# UI Styling
+# ------------------------------------------------------------------------------
+# UI styling
+# ------------------------------------------------------------------------------
 st.write("""
     <style>
     .title { text-align: center; color: #333; font-size: 2.5em; }
@@ -437,7 +459,9 @@ st.write("""
 
 st.write(f'<div class="title">TRSM Product Cost Adjustment Tool (v{VERSION})</div>', unsafe_allow_html=True)
 
+# ------------------------------------------------------------------------------
 # Main Application
+# ------------------------------------------------------------------------------
 st.write('<div class="header">1. Upload Excel Files</div>', unsafe_allow_html=True)
 col1, col2 = st.columns(2)
 with col1:
@@ -461,7 +485,9 @@ if cost_file and export_file:
         "Trim %", "Trim Cost/LB", "Recovery", "Input Cost", "Waste Output $", 
         "Net Input Cost", "Labour $", "Normal Sticker", "Material + Labour",
         "New Final Cost (Lb)", "Column1", "Billling UOM Cost", "Priced Sticker", "Final Cost",
-        "Base Margin %", "Margin $", "Base Price", "List Price"
+        "Base Margin %", "Margin $", "Base Price", "List Price",
+        # NEW: We must have "List Margin %" in the cost sheet
+        "List Margin %"
     }
     for i in range(1, 5):
         cost_required.update({f"Item-{i}", f"Qty-{i}", f"Unit $-{i}", f"Total $-{i}"})
@@ -481,13 +507,13 @@ if cost_file and export_file:
         st.write('<div class="header">Export Sheet Preview</div>', unsafe_allow_html=True)
         st.dataframe(df_export.head(10))
 
+    # 2. Update
     st.write('<div class="header">2. Update Product Cost</div>', unsafe_allow_html=True)
     trsm_code = st.text_input("TRSM Code to Update", "").strip()
     new_cost_price = st.number_input("New Cost Price", min_value=0.0, step=0.01, format="%.2f")
-    st.write("Note: Base Price uses 'Base Margin %' from the input cost file. List Price now uses the 'List Margin%' below *based on Final Cost*.")
-    list_margin_percent_input = st.number_input("List Margin % (e.g., 25 for 25%)", min_value=0.0, max_value=99.99, value=25.0, step=0.1)
-    list_margin_percent = list_margin_percent_input / 100.0  # e.g. 25 => 0.25
-
+    st.write("Note: Both Base Margin % and List Margin % come from the Cost Sheet columns. "
+             "No separate input for List Margin is required.")
+    
     if st.button("Apply Cost Changes"):
         if not trsm_code:
             st.error("Please enter a valid TRSM Code.")
@@ -497,13 +523,14 @@ if cost_file and export_file:
             df_cost_updated, cost_updated, updated_trsm_codes = update_cost_sheet(
                 df_cost,
                 trsm_code,
-                new_cost_price,
-                list_margin_percent
+                new_cost_price
             )
             df_export_updated, export_updated = update_export_sheet(df_export, df_cost_updated, updated_trsm_codes)
 
             if cost_updated or export_updated:
                 st.success(f"✅ Updated pricing for TRSM Code(s): {', '.join(updated_trsm_codes)}")
+
+                # Show updated previews
                 col1, col2 = st.columns(2)
                 with col1:
                     st.write('<div class="header">Updated Cost Sheet Preview</div>', unsafe_allow_html=True)
@@ -511,6 +538,7 @@ if cost_file and export_file:
                     item_cols = [c for c in df_cost_updated.columns if c.startswith("Item-")]
                     mask_item = pd.concat([df_cost_updated[col].isin(updated_trsm_codes) for col in item_cols], axis=1).any(axis=1)
                     st.dataframe(df_cost_updated[mask_main | mask_item])
+
                 with col2:
                     st.write('<div class="header">Updated Export Sheet Preview</div>', unsafe_allow_html=True)
                     export_mask = df_export_updated["Product Code"].isin(updated_trsm_codes)
@@ -524,11 +552,12 @@ if cost_file and export_file:
                     for sheet_name, df in other_sheets.items():
                         df.to_excel(writer, sheet_name=sheet_name, index=False)
                 cost_buf.seek(0)
+
                 with pd.ExcelWriter(export_buf, engine=EXCEL_ENGINE) as writer:
                     df_export_updated.to_excel(writer, sheet_name=export_sheet_name, index=False)
                 export_buf.seek(0)
 
-                # Create a zip file containing both Excel files
+                # Zip both
                 zip_buf = io.BytesIO()
                 with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     zip_file.writestr(f"Updated_Cost_Sheet_{trsm_code}.xlsx", cost_buf.getvalue())
