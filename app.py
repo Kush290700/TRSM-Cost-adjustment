@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 import zipfile
-import logging
 from datetime import datetime
-import numpy as np
+import logging
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO)
@@ -12,19 +12,21 @@ logger = logging.getLogger("TRSM_Cost_Adjustment")
 
 # --- Streamlit Config & UI Styling ---
 st.set_page_config(page_title="TRSM Cost Adjustment Tool", layout="wide")
-st.write("""
+st.markdown("""
     <style>
-    .title { text-align: center; color: #333; font-size: 2.5em; font-weight: bold;}
-    .header { color: #1a1a1a; font-size: 1.5em; margin-top: 1.4em; font-weight: bold;}
-    .footer { text-align: center; color: #777; font-size: 1em; margin-top: 2em; }
-    .stButton>button { background-color: #1d72b8; color: white; border-radius: 5px; padding: 0.7em 1.4em; font-weight: 600;}
+    .title    { text-align: center; color: #0e1e33; font-size: 2.8em; font-weight: 800;}
+    .subtitle { text-align: center; color: #234; font-size: 1.3em; margin-bottom: 1.5em;}
+    .header   { color: #1a1a1a; font-size: 1.4em; margin-top: 1.2em; font-weight: 700;}
+    .footer   { text-align: center; color: #888; font-size: 1.1em; margin-top: 3em;}
+    .note     { color: #345; font-size: 1em;}
+    .stButton>button { background-color: #1d72b8; color: white; border-radius: 6px; padding: 0.7em 1.4em; font-weight: 700;}
     .stButton>button:hover { background-color: #164e7a; }
-    .success { color: green; font-weight: bold; }
-    .warning { color: orange; }
-    .note { color: #345; font-size: 1em;}
+    .summary-good { color: green; font-weight: bold; }
+    .summary-bad  { color: #d00; }
     </style>
 """, unsafe_allow_html=True)
-VERSION = "1.3.0"
+
+VERSION = "1.3.1"
 
 # --- Constants ---
 DEFAULT_RECOVERY = 1.0
@@ -119,7 +121,6 @@ def calculate_price_from_margin(cost: float, margin_percent: float) -> float:
 def calculate_margin_dollars(base_price: float, final_cost: float) -> float:
     return base_price - final_cost
 
-# --- Reverse Calculation for Missing Columns ---
 def auto_fill_missing_columns(df: pd.DataFrame, required_cols=None, verbose=True) -> pd.DataFrame:
     df.columns = [col.strip().replace('\n', ' ') for col in df.columns]
     fills = []
@@ -173,7 +174,6 @@ def auto_fill_missing_columns(df: pd.DataFrame, required_cols=None, verbose=True
             st.warning(f"⚠️ These required columns are missing and could not be auto-filled: {', '.join(still_missing)}")
     return df
 
-# --- File Reading/Validation ---
 def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: str):
     try:
         excel_cost = pd.ExcelFile(cost_file)
@@ -194,9 +194,6 @@ def read_files(cost_file, export_file, cost_sheet_name: str, export_sheet_name: 
             st.error("One or both sheets are empty.")
             return None, None, None
         return df_cost, df_export, other_sheets
-    except ValueError as e:
-        st.error(f"Sheet not found: {e}.")
-        return None, None, None
     except Exception as e:
         st.error(f"Error reading files: {e}")
         return None, None, None
@@ -209,12 +206,7 @@ def validate_columns(df: pd.DataFrame, required_cols: set, sheet_name: str) -> b
         return False
     return True
 
-# --- Core Cost Update Logic (Row + Bulk) ---
-def update_cost_row(
-    row: pd.Series,
-    new_cost_price: float = None,
-    original_row: pd.Series = None
-) -> pd.Series:
+def update_cost_row(row: pd.Series, new_cost_price: float = None, original_row: pd.Series = None) -> pd.Series:
     old_vendor_invoice = safe_float(original_row.get("Vendor Invoice Price") if original_row is not None else row.get("Vendor Invoice Price"))
     old_final_cost = safe_float(original_row.get("Final Cost") if original_row is not None else row.get("Final Cost"))
     old_base_price = safe_float(original_row.get("Base Price") if original_row is not None else row.get("Base Price"))
@@ -296,11 +288,7 @@ def update_cost_row(
     row["Margin $"] = margin_dollars
     return row
 
-def update_cost_sheet(
-    df_cost: pd.DataFrame,
-    trsm_code: str,
-    new_cost_price: float
-):
+def update_cost_sheet(df_cost: pd.DataFrame, trsm_code: str, new_cost_price: float):
     df_updated = df_cost.copy()
     trsm_code_clean = clean_trsm_code(trsm_code)
     updated_flag = False
@@ -353,11 +341,7 @@ def update_cost_sheet(
         iteration += 1
     return df_updated, updated_flag, updated_trsm_codes
 
-def update_export_sheet(
-    df_export: pd.DataFrame,
-    df_cost_updated: pd.DataFrame,
-    updated_trsm_codes: set
-):
+def update_export_sheet(df_export: pd.DataFrame, df_cost_updated: pd.DataFrame, updated_trsm_codes: set):
     df_export_updated = df_export.copy()
     updated_flag = False
     df_export_updated["Product Code"] = df_export_updated["Product Code"].apply(clean_trsm_code)
@@ -377,16 +361,20 @@ def update_export_sheet(
     return df_export_updated, updated_flag
 
 # --- MAIN APP LOGIC ---
-st.write(f'<div class="title">TRSM Product Cost Adjustment Tool <span style="font-size:0.6em;">v{VERSION}</span></div>', unsafe_allow_html=True)
-st.write('<div class="header">Step 1: Upload Excel Files</div>', unsafe_allow_html=True)
-with st.expander("Instructions", expanded=True):
+st.markdown(f'<div class="title">TRSM Product Cost Adjustment Tool</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="subtitle">Bulk pricing update with audit trail · Version {VERSION}</div>', unsafe_allow_html=True)
+
+with st.sidebar:
+    st.header("🔧 Instructions")
     st.markdown("""
-    1. **Upload Cost Sheet** and **Export Sheet** (Excel files).
-    2. Enter sheet names if different from defaults.
-    3. Preview first few rows to confirm data loaded correctly.
-    4. You can bulk update cost prices by editing in the table, or by uploading a price change CSV/Excel below (optional).
+    - Upload both the **Cost Sheet** and **Export Sheet** Excel files.
+    - If using different sheet names, specify them in the main page.
+    - You may update prices by editing the table below, or by uploading a CSV/Excel of new prices.
+    - Review all changes, then click **Apply All Cost Changes**.
+    - Download both updated sheets as a single ZIP.
     """)
 
+st.markdown('<div class="header">Step 1: Upload Excel Files</div>', unsafe_allow_html=True)
 col1, col2 = st.columns(2)
 with col1:
     cost_file = st.file_uploader("Upload Cost Sheet (XLSX)", type=["xlsx"], key="cost")
@@ -411,32 +399,21 @@ if cost_file and export_file:
     for i in range(1, 5):
         cost_required.update({f"Item-{i}", f"Qty-{i}", f"Unit $-{i}", f"Total $-{i}"})
     export_required = {"Product Code", "Cost Price", "Base Price", "Suggested Price"}
-    # --- Enhanced: auto fill and debug missing columns before validate ---
     df_cost = auto_fill_missing_columns(df_cost, required_cols=cost_required)
     if not validate_columns(df_cost, cost_required, "Cost Sheet"):
         st.stop()
     if not validate_columns(df_export, export_required, "Export Sheet"):
         st.stop()
-    st.success("Files uploaded successfully!")
-    st.write('<div class="header">Preview Sheets</div>', unsafe_allow_html=True)
+    st.success("✅ Files uploaded successfully!")
+    st.markdown('<div class="header">Preview Sheets</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    with c1:
-        st.dataframe(df_cost.head(10), use_container_width=True)
-    with c2:
-        st.dataframe(df_export.head(10), use_container_width=True)
-    # --- Bulk Price Update Table & File Upload ---
-    st.write('<div class="header">Step 2: Bulk Update Product Costs (Table Edit or Upload CSV)</div>', unsafe_allow_html=True)
-    with st.expander("Bulk Update Help", expanded=False):
-        st.markdown("""
-        - Enter/paste **TRSM Codes** and their **new Cost Prices**.
-        - Any blank rows or zero/invalid prices will be skipped.
-        - Use the + button to add more rows, or paste columns from Excel.
-        - **OR:** Upload a simple two-column file (TRSM Code, New Cost Price).
-        """)
-    sample_data = pd.DataFrame({
-        "TRSM Code": ["", "", ""],
-        "New Cost Price": [None, None, None]
-    })
+    with c1: st.dataframe(df_cost.head(8), use_container_width=True)
+    with c2: st.dataframe(df_export.head(8), use_container_width=True)
+
+    # --- Cost Update Section ---
+    st.markdown('<div class="header">Step 2: Bulk Update Product Costs</div>', unsafe_allow_html=True)
+    st.info("🔄 You can edit prices below, **or** upload a simple two-column file (TRSM Code, New Cost Price).")
+    sample_data = pd.DataFrame({"TRSM Code": ["", "", ""], "New Cost Price": [None, None, None]})
     edit_df = st.data_editor(
         sample_data,
         num_rows="dynamic",
@@ -445,8 +422,8 @@ if cost_file and export_file:
         key="bulk_cost_editor",
         column_order=["TRSM Code", "New Cost Price"]
     )
-    # Optional: Bulk price update upload
-    st.markdown('<div class="note">Alternatively, upload a CSV or Excel with columns <b>TRSM Code</b>, <b>New Cost Price</b> to apply many changes at once.</div>', unsafe_allow_html=True)
+    # --- File upload alternative ---
+    st.markdown('<div class="note">Upload CSV/Excel for bulk pricing: <b>TRSM Code</b>, <b>New Cost Price</b></div>', unsafe_allow_html=True)
     uploaded_price_file = st.file_uploader("Bulk Price Update File", type=["csv", "xlsx"], key="pricefile")
     if uploaded_price_file:
         try:
@@ -456,23 +433,28 @@ if cost_file and export_file:
                 price_df = pd.read_excel(uploaded_price_file)
             st.success("Bulk price update file loaded!")
             st.dataframe(price_df)
-            # Sanitize input
+            # Clean and convert input
             price_df["TRSM Code"] = price_df["TRSM Code"].astype(str).apply(clean_trsm_code)
+            price_df["New Cost Price"] = pd.to_numeric(price_df["New Cost Price"], errors="coerce")
             price_df = price_df[price_df["TRSM Code"].str.strip() != ""]
+            price_df = price_df[price_df["New Cost Price"].notna()]
             price_df = price_df[price_df["New Cost Price"] > 0]
             changes_to_apply = price_df
         except Exception as e:
             st.error(f"Could not read uploaded file: {e}")
             changes_to_apply = pd.DataFrame()
     else:
-        # Use table editor
+        # Use editable table
         changes_to_apply = edit_df.dropna(subset=["TRSM Code", "New Cost Price"])
+        changes_to_apply["New Cost Price"] = pd.to_numeric(changes_to_apply["New Cost Price"], errors="coerce")
         changes_to_apply = changes_to_apply[changes_to_apply["TRSM Code"].str.strip() != ""]
+        changes_to_apply = changes_to_apply[changes_to_apply["New Cost Price"].notna()]
         changes_to_apply = changes_to_apply[changes_to_apply["New Cost Price"] > 0]
-    # --- APPLY ALL CHANGES ---
+
+    # --- Apply All Changes ---
     if changes_to_apply.empty:
         st.info("Add at least one valid TRSM Code and Cost Price above or upload a file to enable the Update button.")
-    if st.button("Apply All Cost Changes", type="primary", disabled=changes_to_apply.empty):
+    if st.button("✅ Apply All Cost Changes", type="primary", disabled=changes_to_apply.empty):
         summary_rows = []
         all_updated_codes = set()
         df_cost_updated = df_cost.copy()
@@ -488,16 +470,16 @@ if cost_file and export_file:
                     "New Cost Price": price,
                     "Updated?": "Yes" if cost_updated or export_updated else "No"
                 })
-            st.write('<div class="header">Summary of Updates</div>', unsafe_allow_html=True)
+            st.markdown('<div class="header">Summary of Updates</div>', unsafe_allow_html=True)
             st.dataframe(pd.DataFrame(summary_rows), use_container_width=True)
             if all_updated_codes:
                 st.success(f"✅ Updated pricing for {len(all_updated_codes)} TRSM Code(s).")
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.write('<div class="header">Updated Cost Sheet Rows</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="header">Updated Cost Sheet Rows</div>', unsafe_allow_html=True)
                     st.dataframe(df_cost_updated[df_cost_updated["TRSM Code"].isin(all_updated_codes)])
                 with col2:
-                    st.write('<div class="header">Updated Export Sheet Rows</div>', unsafe_allow_html=True)
+                    st.markdown('<div class="header">Updated Export Sheet Rows</div>', unsafe_allow_html=True)
                     st.dataframe(df_export_updated[df_export_updated["Product Code"].isin(all_updated_codes)])
             else:
                 st.warning("No rows were updated. Please check your input.")
@@ -517,15 +499,15 @@ if cost_file and export_file:
                 zip_file.writestr(f"Updated_Cost_Sheet_BULK.xlsx", cost_buf.getvalue())
                 zip_file.writestr(f"Updated_Export_Sheet_BULK.xlsx", export_buf.getvalue())
             zip_buf.seek(0)
-            st.write('<div class="header">Download Updated Files</div>', unsafe_allow_html=True)
+            st.markdown('<div class="header">Download Updated Files</div>', unsafe_allow_html=True)
             st.download_button(
-                label="Download Updated Files (ZIP)",
+                label="⬇️ Download Updated Files (ZIP)",
                 data=zip_buf.getvalue(),
                 file_name=f"Updated_Files_BULK.zip",
                 mime="application/zip"
             )
         except Exception as e:
             st.error(f"Error during update: {e}")
-    st.write(f'<div class="footer">Powered by Kush | {datetime.now().strftime("%B %d, %Y")} | Version {VERSION}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="footer">Powered by Kush | {datetime.now().strftime("%B %d, %Y")} | Version {VERSION}</div>', unsafe_allow_html=True)
 else:
     st.info("Please upload both Cost Sheet and Export Sheet to proceed.")
