@@ -362,7 +362,7 @@ def update_export_sheet(df_export: pd.DataFrame, df_cost_updated: pd.DataFrame, 
 
 # --- MAIN APP LOGIC ---
 st.markdown(f'<div class="title">TRSM Product Cost Adjustment Tool</div>', unsafe_allow_html=True)
-st.markdown(f'<div class="subtitle">Bulk pricing update with audit trail · Version {VERSION}</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="subtitle">Bulk pricing update· Version {VERSION}</div>', unsafe_allow_html=True)
 
 with st.sidebar:
     st.header("🔧 Instructions")
