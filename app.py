@@ -325,7 +325,9 @@ def update_cost_sheet(df_cost: pd.DataFrame, trsm_code: str, new_cost_price: flo
                     trsm_code_item = df_updated.loc[idx, item_col]
                     matching_row = df_updated[df_updated["TRSM Code"] == trsm_code_item]
                     if not matching_row.empty:
-                        df_updated.loc[idx, unit_col] = safe_float(matching_row.iloc[0]["Vendor Invoice Price"])
+                        # ←─── UPDATED LINE ────
+                        df_updated.loc[idx, unit_col] = safe_float(matching_row.iloc[0]["Net Input Cost"])
+                        # ────────────────────────
                 composite_mask |= mask_item
                 to_update = True
         if composite_mask.any():
@@ -360,7 +362,7 @@ def update_export_sheet(df_export: pd.DataFrame, df_cost_updated: pd.DataFrame, 
             updated_flag = True
     return df_export_updated, updated_flag
 
-# --- MAIN APP LOGIC ---
+# --- MAIN APP Logic ---
 st.markdown(f'<div class="title">TRSM Product Cost Adjustment Tool</div>', unsafe_allow_html=True)
 st.markdown(f'<div class="subtitle">Bulk pricing update· Version {VERSION}</div>', unsafe_allow_html=True)
 
@@ -407,8 +409,10 @@ if cost_file and export_file:
     st.success("✅ Files uploaded successfully!")
     st.markdown('<div class="header">Preview Sheets</div>', unsafe_allow_html=True)
     c1, c2 = st.columns(2)
-    with c1: st.dataframe(df_cost.head(8), use_container_width=True)
-    with c2: st.dataframe(df_export.head(8), use_container_width=True)
+    with c1:
+        st.dataframe(df_cost.head(8), use_container_width=True)
+    with c2:
+        st.dataframe(df_export.head(8), use_container_width=True)
 
     # --- Cost Update Section ---
     st.markdown('<div class="header">Step 2: Bulk Update Product Costs</div>', unsafe_allow_html=True)
